@@ -1,0 +1,4 @@
+# ib_insync was abandoned in 2024 after the author's passing.
+# ib_async is the community-maintained successor with the same API.
+ib_async>=1.0.1
+pandas>=2.0
