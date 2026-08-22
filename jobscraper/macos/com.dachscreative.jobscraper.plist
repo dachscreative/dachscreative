@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. install-agent.sh substitutes __ROOT__ and writes the result to
+  ~/Library/LaunchAgents/. Do not load this file directly - the paths below
+  are placeholders.
+
+  This replaces the crontab entry used on Ubuntu. launchd is the supported
+  scheduler on macOS; cron still exists but runs under a TCC profile that
+  cannot reach most of the home directory without Full Disk Access being
+  granted to /usr/sbin/cron by hand.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dachscreative.jobscraper</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__ROOT__/macos/run.command</string>
+        <string>--no-pause</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__ROOT__</string>
+
+    <!-- Daily at 08:00. launchd fires a missed run when the Mac wakes, so a
+         machine asleep at 08:00 still collects rather than silently skipping
+         the day the way cron would. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>8</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- launchd gives an agent a near-empty PATH. run.command uses absolute
+         paths throughout, but anything the scraper shells out to would not be
+         found without this. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__ROOT__/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__ROOT__/logs/launchd.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
