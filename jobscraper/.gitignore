@@ -1,0 +1,7 @@
+.venv/
+data/
+logs/
+exports/
+config.toml
+__pycache__/
+*.pyc

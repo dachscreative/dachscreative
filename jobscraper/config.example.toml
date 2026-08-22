@@ -1,0 +1,81 @@
+# Copy to config.toml and edit. config.toml is gitignored; this file is not.
+#
+#   cp config.example.toml config.toml
+
+[http]
+timeout = 30.0
+delay   = 1.0          # seconds between requests, per source. Be polite.
+user_agent = "jobscraper/1.0 (personal job search)"
+
+# ---------------------------------------------------------------------------
+# The kill switch. run.sh reports exit code 2 as "ABORTED: VPN check failed".
+# ---------------------------------------------------------------------------
+[vpn]
+require_interface = true
+interface_prefixes = ["tun", "wg", "ppp", "utun"]
+
+# Put your real (non-VPN) public IP here. Find it with the VPN OFF:
+#   curl -s https://api.ipify.org
+# A run that sees this address knows the tunnel is not carrying the traffic.
+blocked_ips = []
+
+check_url = "https://api.ipify.org"
+timeout   = 10.0
+
+# ---------------------------------------------------------------------------
+# Where to look. Comment out what you do not want.
+# ---------------------------------------------------------------------------
+[[sources]]
+name = "remoteok"
+enabled = true
+
+[[sources]]
+name = "arbeitnow"
+enabled = true
+pages = 2
+
+[[sources]]
+name = "weworkremotely"
+enabled = true
+categories = ["remote-programming-jobs", "remote-devops-sysadmin-jobs"]
+
+[[sources]]
+name = "greenhouse"
+enabled = false
+boards = []            # e.g. ["stripe", "figma"] - the slug in the board URL
+
+# ---------------------------------------------------------------------------
+# What counts as interesting.
+# ---------------------------------------------------------------------------
+[filters]
+posted_within_days = 30
+remote_only = false
+# Substrings matched against the posting's location. Empty = anywhere.
+locations = []         # e.g. ["remote", "germany", "deutschland", "münchen"]
+
+[scoring]
+min_score        = 3.0   # below this, the posting is dropped
+title_multiplier = 3.0   # a term in the title counts triple
+recency_days     = 7
+recency_bonus    = 1.0
+
+[scoring.include]
+python     = 3
+django     = 2
+fastapi    = 2
+sql        = 1
+postgres   = 2
+docker     = 1
+kubernetes = 1
+aws        = 1
+"data engineer"  = 5
+"backend"        = 3
+"platform"       = 2
+"remote"         = 1
+
+[scoring.exclude]
+# Written as negatives for readability; the magnitude is what is subtracted.
+unpaid       = -10
+internship   = -5
+"commission only" = -10
+php          = -2
