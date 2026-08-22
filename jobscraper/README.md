@@ -37,13 +37,26 @@ Schedule it:
 
 ## Output
 
-Everything lands in `exports/`:
+One Excel workbook per run, in `exports/`:
 
 | File | What |
 |---|---|
-| `jobs-YYYY-MM-DD.csv` | everything kept, best score first |
-| `new-YYYY-MM-DD.md` | only what is new since the last run |
-| `latest.csv` / `latest.md` | rewritten each run, a stable path to bookmark |
+| `jobs_YYYY-MM-DD.xlsx` | the run's workbook |
+| `latest.xlsx` | rewritten each run, a stable path to bookmark |
+
+Each workbook has two sheets:
+
+| Sheet | What |
+|---|---|
+| `Jobs` | everything kept, best score first |
+| `New` | only what is new since the last run |
+
+Both sheets get a frozen header, an autofilter, scores as real numbers, dates
+as real dates (so they sort correctly), and the URL as a clickable link. New
+rows are shaded green on the `Jobs` sheet.
+
+The underscore in `jobs_YYYY-MM-DD.xlsx` is deliberate: `run.sh` reports the
+newest export with `ls -1t exports/jobs_*.xlsx`, and a hyphen would not match.
 
 State lives in `data/jobs.db` (SQLite). Logs are `logs/YYYY-MM.log` for detail
 and `logs/cron.log` for one line per run.
@@ -139,7 +152,7 @@ jobscraper/
   models.py         the Job shape, HTML cleaning, identity
   scoring.py        keyword scoring
   store.py          SQLite, new-since-last-run
-  export.py         CSV + Markdown
+  export.py         xlsx workbook
   sources/          remoteok, arbeitnow, weworkremotely, greenhouse
 tests/
 macos/              separate macOS packaging, see macos/README.md

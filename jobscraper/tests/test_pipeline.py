@@ -156,30 +156,83 @@ class TestStore(unittest.TestCase):
 
 
 class TestExport(unittest.TestCase):
-    def test_writes_all_four_files(self):
+    def test_writes_dated_and_latest_workbooks(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "exports"
             j = job()
             j.score, j.is_new, j.matched = 7.5, True, ["python(title)"]
             written = export_all(out, [j], [j])
 
-            self.assertEqual(len(written), 4)
+            self.assertEqual(len(written), 2)
             for path in written:
                 self.assertTrue(path.exists(), f"{path} was not written")
+                self.assertEqual(path.suffix, ".xlsx")
 
-            csv_text = (out / "latest.csv").read_text()
-            self.assertIn("Backend Engineer", csv_text)
-            self.assertIn("7.50", csv_text)
+            # run.sh globs exports/jobs_*.xlsx to report the newest export.
+            self.assertEqual(len(list(out.glob("jobs_*.xlsx"))), 1)
 
-            md_text = (out / "latest.md").read_text()
-            self.assertIn("Backend Engineer", md_text)
-            self.assertIn("https://example.invalid/1", md_text)
+    def test_workbook_contents(self):
+        from openpyxl import load_workbook
 
-    def test_empty_new_list_says_so(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "exports"
-            export_all(out, [], [])
-            self.assertIn("Nothing new", (out / "latest.md").read_text())
+            j = job()
+            j.score, j.is_new, j.matched = 7.5, True, ["python(title)"]
+            export_all(out, [j], [j])
+
+            book = load_workbook(out / "latest.xlsx")
+            self.assertEqual(book.sheetnames, ["Jobs", "New"])
+
+            ws = book["Jobs"]
+            self.assertEqual(ws["A1"].value, "Score")
+            self.assertEqual(ws["A2"].value, 7.5, "score must be a number, not text")
+            self.assertEqual(ws["C2"].value, "Backend Engineer")
+            self.assertEqual(ws["B2"].value, "yes")
+            self.assertEqual(ws["J2"].hyperlink.target, "https://example.invalid/1")
+            self.assertEqual(ws.freeze_panes, "A2")
+            self.assertIsNotNone(ws.auto_filter.ref)
+            book.close()
+
+    def test_posted_date_is_a_real_date(self):
+        from datetime import date as _date
+
+        from openpyxl import load_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "exports"
+            export_all(out, [job()], [])
+            book = load_workbook(out / "latest.xlsx")
+            value = book["Jobs"]["H2"].value
+            book.close()
+            self.assertIsInstance(value, (_date, datetime), "dates must sort as dates")
+
+    def test_empty_run_still_writes_a_workbook(self):
+        from openpyxl import load_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "exports"
+            written = export_all(out, [], [])
+            self.assertEqual(len(written), 2)
+
+            book = load_workbook(out / "latest.xlsx")
+            self.assertIn("Nothing was collected", str(book["Jobs"]["C2"].value))
+            self.assertIn("Nothing was collected", str(book["New"]["C2"].value))
+            book.close()
+
+    def test_nothing_new_does_not_claim_nothing_collected(self):
+        """A run that found plenty but nothing new must say so on the New sheet."""
+        from openpyxl import load_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "exports"
+            export_all(out, [job()], [])
+
+            book = load_workbook(out / "latest.xlsx")
+            message = str(book["New"]["C2"].value)
+            book.close()
+
+            self.assertIn("Nothing new", message)
+            self.assertNotIn("collected", message)
 
 
 class TestVpn(unittest.TestCase):
