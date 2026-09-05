@@ -14,7 +14,7 @@ envfile=/etc/hermes.env
 
 # An API key must not appear in the unit file, which is world-readable.
 if [ -n "$HERMES_API_KEY" ]; then
-  printf 'LLAMA_ARG_API_KEY=%s\n' "$HERMES_API_KEY" > "$envfile"
+  printf 'LLAMA_API_KEY=%s\n' "$HERMES_API_KEY" > "$envfile"
   chmod 0640 "$envfile"
   chown root:"$HERMES_SERVICE_USER" "$envfile"
   envline="EnvironmentFile=$envfile"

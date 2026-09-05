@@ -153,6 +153,26 @@ sudo ./scripts/uninstall.sh            # remove service and binaries, keep weigh
 sudo ./scripts/uninstall.sh --purge    # remove everything including the model
 ```
 
+## What has been verified
+
+These scripts were written on a CPU-only Ubuntu 24.04 container whose egress
+policy blocks `huggingface.co`, so the steps are not equally proven:
+
+- **Verified by running here** — `00-preflight.sh` (correct hardware readout and
+  detection of the blocked Hub), `02-build-llama.sh` (full clone, cmake
+  configure and build; `llama-server` and `llama-cli` installed and executing),
+  the server flag set used by the service and foreground runner (every flag
+  checked against the built binary's `--help`), and the rendered systemd unit
+  (`systemd-analyze verify` clean apart from the not-yet-installed binary).
+- **Not exercised** — `03-fetch-model.sh` and everything downstream of it
+  (`04-install-service.sh`, `05-smoke-test.sh`), because no weights could be
+  downloaded. The logic is straightforward but has not been run against a real
+  model.
+
+Expect the first real run to be step 3 onward. If something there misbehaves,
+the error messages are written to say which of the two likely causes it is (the
+repo/quant not existing, versus a local problem).
+
 ## Licensing
 
 Hermes 4 is a fine-tune, so the weights carry the base model's upstream licence
