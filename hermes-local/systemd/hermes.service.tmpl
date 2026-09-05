@@ -1,0 +1,44 @@
+[Unit]
+Description=Hermes 4 14B (llama.cpp server)
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=__USER__
+Group=__USER__
+ExecStart=__BIN__/llama-server \
+  --model __MODEL__ \
+  --host __HOST__ \
+  --port __PORT__ \
+  --ctx-size __CTX__ \
+  --parallel __PARALLEL__ \
+  --threads __THREADS__ \
+  --n-gpu-layers __NGL__ \
+  --alias hermes-4-14b \
+  --jinja
+Restart=on-failure
+RestartSec=5
+# Loading several GB of weights from cold cache can take a while.
+TimeoutStartSec=600
+__ENVFILE__
+
+# Hardening: the server needs only to read its model directory and bind a port.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=__PRIVATE_DEVICES__
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+ReadOnlyPaths=__MODELDIR__
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Downloaded weights and build output must never be committed.
+models/
+*.gguf
+build/
+venv/
+__pycache__/
