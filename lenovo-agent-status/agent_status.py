@@ -8,8 +8,9 @@ over SSH/Tailscale, or from a `claude remote-control` session:
 
 Standard library only. It prints the machine, each NVIDIA GPU with a short
 utilisation graph, every process holding GPU memory, the agent processes,
-the LangGraph API and the Ollama models, then a RESULT with the fix for
-anything that is wrong. Exit code 0 means the agent is running on the GPU.
+the LangGraph API, the Ollama models and the Hermes llama.cpp server, then a
+RESULT with the fix for anything that is wrong. Exit code 0 means the agent
+is running on the GPU.
 """
 
 import argparse
@@ -21,12 +22,15 @@ import shutil
 import socket
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 
 # Words from the agent's command line (override with --pattern or AGENT_PATTERN).
 DEFAULT_PATTERN = r"langgraph|vergabe|nexus|hermes"
+# Model servers are not the agent, even when their paths match (/opt/hermes/...).
+MODEL_SERVERS = ("llama-server", "ollama", "ollama_llama_server")
 # `langgraph dev` listens on 2024, `langgraph up` on 8123; both answer GET /ok.
 LANGGRAPH_URLS = ("http://127.0.0.1:2024", "http://127.0.0.1:8123")
 GPU_QUERY = (
@@ -54,11 +58,14 @@ def run(*cmd, timeout=10):
 
 
 def http_get(url, timeout=2):
+    """Return (HTTP status, body); the status is None when nothing answers."""
     try:
         with _opener.open(url, timeout=timeout) as resp:
-            return resp.read().decode()
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as err:
+        return err.code, ""
     except (OSError, ValueError, http.client.HTTPException):
-        return None
+        return None, ""
 
 
 def read(path):
@@ -106,6 +113,19 @@ def process_table():
         if len(fields) == 3:
             table[int(fields[0])] = (int(fields[1]), fields[2])
     return table
+
+
+def binary(args):
+    return os.path.basename(args.split(maxsplit=1)[0])
+
+
+def flag(args, *names):
+    """Value of the first of `names` on a command line, e.g. flag(args, "--port")."""
+    words = args.split()
+    for name in names:
+        if name in words[:-1]:
+            return words[words.index(name) + 1]
+    return None
 
 
 def show_machine():
@@ -215,14 +235,18 @@ def show_gpu_processes(procs):
 
 def show_agent(procs, pattern, gpu_users):
     rx = re.compile(pattern, re.IGNORECASE)
-    agent = {pid: p for pid, p in procs.items() if rx.search(p[1]) and SELF not in p[1]}
+    agent = {
+        pid: p
+        for pid, p in procs.items()
+        if rx.search(p[1]) and binary(p[1]) not in MODEL_SERVERS and SELF not in p[1]
+    }
     print(f"\nAgent (/{pattern}/)")
     for pid, (age, args) in sorted(agent.items()):
         on_gpu = f"  {gpu_users[pid] / 1024:.1f} GB GPU" if pid in gpu_users else ""
         print(f"  pid {pid:<7} up {duration(age):<7}{on_gpu} {clip(args, 30 + len(on_gpu))}")
     if not agent:
         print("  no matching process")
-    api = next((url for url in LANGGRAPH_URLS if '"ok"' in (http_get(url + "/ok") or "")), None)
+    api = next((url for url in LANGGRAPH_URLS if '"ok"' in http_get(url + "/ok")[1]), None)
     print(f"  LangGraph API: {'up at ' + api if api else 'not listening on :2024 or :8123'}")
     return agent, api
 
@@ -238,21 +262,22 @@ def ollama_url():
 
 def show_ollama(problems, have_gpu):
     url = ollama_url()
-    print(f"\nOllama ({url})")
-    body, models = http_get(url + "/api/ps"), None
-    if body:
+    status, body = http_get(url + "/api/ps")
+    models = None
+    if status == 200:
         try:
             models = json.loads(body).get("models") or []
         except (ValueError, AttributeError):
             pass
     if models is None:
-        print("  not answering")
         if shutil.which("ollama"):
+            print(f"\nOllama ({url})\n  not answering")
             problems.append(
                 f"Ollama is installed but not answering at {url}:\n"
                 "     sudo systemctl restart ollama   (logs: journalctl -u ollama -e)"
             )
         return None
+    print(f"\nOllama ({url})")
     for model in models:
         name, size, vram = model.get("name", "?"), model.get("size") or 0, model.get("size_vram") or 0
         share = 100 * vram / size if size else 0
@@ -278,6 +303,59 @@ def show_ollama(problems, have_gpu):
     return models
 
 
+def why_llama_on_cpu(pid, args, unit):
+    """The three ways hermes-local/ ends up on the CPU, most specific first."""
+    fix = "     With nvidia-smi working, re-run hermes-local/scripts/04-install-service.sh."
+    if flag(args, "--n-gpu-layers", "-ngl", "--gpu-layers") == "0":
+        return (
+            f"llama-server (pid {pid}) runs with --n-gpu-layers 0: HERMES_NGL=auto resolved\n"
+            "     to 0 because the GPU was not usable when the service was installed.\n" + fix
+        )
+    if unit.get("PrivateDevices") == "yes":
+        return "hermes.service has PrivateDevices=yes, which hides the GPU from llama-server.\n" + fix
+    exe = args.split(maxsplit=1)[0]
+    ok, libs = run("ldd", exe if os.path.isabs(exe) else shutil.which(exe) or exe)
+    if ok and not re.search(r"libcu(da|dart|blas)", libs):
+        return (
+            "llama-server was built CPU-only (no nvcc when 02-build-llama.sh ran):\n"
+            "     sudo apt install nvidia-cuda-toolkit, then re-run 02-build-llama.sh and 04-install-service.sh."
+        )
+    return (
+        f"llama-server (pid {pid}) holds no GPU memory although it should offload.\n"
+        "     Check: journalctl -u hermes -b | grep -iE 'cuda|offload'"
+    )
+
+
+def show_llama(procs, gpu_users, problems, have_gpu):
+    """llama.cpp's llama-server, e.g. the Hermes 4 14B service from hermes-local/."""
+    servers = {pid: p for pid, p in procs.items() if binary(p[1]) == "llama-server"}
+    ok, out = run("systemctl", "show", "-p", "LoadState,ActiveState,PrivateDevices", "hermes.service")
+    unit = dict(line.split("=", 1) for line in out.splitlines() if "=" in line) if ok else {}
+    if not servers and unit.get("LoadState") != "loaded":
+        return False
+    print("\nllama.cpp server (Hermes)")
+    if unit.get("LoadState") == "loaded":
+        print(f"  hermes.service: {unit.get('ActiveState', '?')}")
+        if unit.get("ActiveState") == "failed":
+            problems.append("hermes.service has failed:\n     sudo systemctl restart hermes   (logs: journalctl -u hermes -e)")
+    for pid, (age, args) in sorted(servers.items()):
+        host, port = flag(args, "--host") or "127.0.0.1", flag(args, "--port") or "8080"
+        if host in ("0.0.0.0", "::"):  # a bind-all address, not one to connect to
+            host = "127.0.0.1"
+        status, _ = http_get(f"http://{host}:{port}/health")
+        health = {200: "ready", 503: "loading model", None: "not answering"}.get(status, f"HTTP {status}")
+        where = f"{gpu_users[pid] / 1024:.1f} GB on GPU" if pid in gpu_users else "not on the GPU"
+        print(f"  pid {pid:<7} up {duration(age):<7} {host}:{port} {health}, {where}")
+        if status is None:
+            problems.append(
+                f"llama-server (pid {pid}) does not answer on {host}:{port}/health, so the agent cannot use it:\n"
+                "     journalctl -u hermes -e"
+            )
+        if have_gpu and pid not in gpu_users:
+            problems.append(why_llama_on_cpu(pid, args, unit))
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -295,7 +373,12 @@ def main() -> int:
     gpus = show_gpus(max(args.samples, 1), problems)
     gpu_users = show_gpu_processes(procs) if gpus else {}
     agent, api = show_agent(procs, args.pattern, gpu_users)
+    known = len(problems)
     models = show_ollama(problems, bool(gpus))
+    has_llama = show_llama(procs, gpu_users, problems, bool(gpus))
+    explained = len(problems) > known  # a model server section already said what is wrong
+    if models is None and not has_llama and not shutil.which("ollama"):
+        print("\nModel server: none found (no Ollama, no llama-server)")
 
     if not agent and not api:
         problems.insert(
@@ -306,10 +389,10 @@ def main() -> int:
     on_gpu = bool(gpu_users) or any(m.get("size_vram") for m in models or [])
     # Ollama up with nothing loaded just means no request in the last 5 minutes.
     idle = models == []
-    if gpus and not on_gpu and not idle:
+    if gpus and not on_gpu and not idle and not explained:
         problems.append(
             "Nothing is computing on the GPU: no process holds GPU memory.\n"
-            "     Is the model server (Ollama) running, and is the agent pointed at it?"
+            "     Start the model server (Ollama or hermes.service) and check the agent points at it."
         )
 
     print()
